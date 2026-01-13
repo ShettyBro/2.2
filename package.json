@@ -1,0 +1,30 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "<p>______________________________________________________________________________________________________________________________________________________________</p>",
+  "dependencies": {
+    "@azure/storage-blob": "^12.29.1",
+    "bcryptjs": "^2.4.3",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.1",
+    "express-session": "^1.18.1",
+    "jsonwebtoken": "^9.0.3",
+    "mssql": "^11.0.1",
+    "mysql": "^2.18.1",
+    "node-fetch": "^2.7.0",
+    "resend": "^6.7.0"
+  },
+  "devDependencies": {
+    "video.js": "^8.19.1"
+  }
+}

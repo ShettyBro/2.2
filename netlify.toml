@@ -1,0 +1,20 @@
+[build]
+  functions = "functions"
+  publish = "public"
+
+# Redirect /reset to /reset.html
+[[redirects]]
+  from = "/reset"
+  to = "/reset.html"
+  status = 200
+
+# Catch-all, but ignore reset.html
+[[redirects]]
+  from = "/"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/index.html"
+  to = "/index.html"
+  status = 200
