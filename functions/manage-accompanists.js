@@ -27,25 +27,53 @@ const headers = {
 };
 
 const verifyAuth = (event) => {
-  const authHeader = event.headers.authorization || event.headers.Authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new Error('Missing or invalid Authorization header');
-  }
-
-  const token = authHeader.substring(7);
-  const decoded = jwt.verify(token, JWT_SECRET);
-
-  if (decoded.role !== 'principal' && decoded.role !== 'manager') {
-    throw new Error('Unauthorized: Principal or Manager role required');
-  }
-
-  return {
-    user_id: decoded.user_id,
-    role: decoded.role,
-    college_id: decoded.college_id,
-  };
+ try {
+      const authHeader = event.headers.authorization || event.headers.Authorization;
+         
+         if (!authHeader || !authHeader.startsWith("Bearer ")) {
+           return {
+             statusCode: 401,
+             headers,
+             body: JSON.stringify({
+               success: false,
+               message: "Token expired. Redirecting to login...",
+               redirect: "https://vtufest2026.acharyahabba.com/",
+             }),
+           };
+         }
+     
+         const token = authHeader.substring(7);
+         let decoded;
+     
+         try {
+           decoded = jwt.verify(token, JWT_SECRET);
+         } catch (err) {
+           return {
+             statusCode: 401,
+             headers,
+             body: JSON.stringify({
+               success: false,
+               message: "Token expired. Redirecting to login...",
+               redirect: "https://vtufest2026.acharyahabba.com/",
+             }),
+           };
+         }
+       const role = decoded.role;
+ 
+ 
+     if (decoded.role !== 'PRINCIPAL' && decoded.role !== 'MANAGER') {
+       throw new Error('Unauthorized: Principal or Manager role required');
+     }
+     const auth = {
+       user_id: decoded.user_id,
+       college_id: decoded.college_id,
+       role: decoded.role,
+     };
+      return auth;
+    } catch (error) {
+      throw error;
+    }
 };
-
 const generateSASUrl = (blobPath) => {
   const sharedKeyCredential = new StorageSharedKeyCredential(
     AZURE_STORAGE_ACCOUNT_NAME,
