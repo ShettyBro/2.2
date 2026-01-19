@@ -114,7 +114,16 @@ const initAccompanist = async (pool, auth, body) => {
     return {
       statusCode: 400,
       headers,
-      body: JSON.stringify({ error: 'full_name, phone, and accompanist_type are required' }),
+      body: JSON.stringify({ success: false, error: 'full_name, phone, and accompanist_type are required' }),
+    };
+  }
+
+  // Validate accompanist_type (ONLY faculty or professional, NO student)
+  if (!['faculty', 'professional'].includes(accompanist_type)) {
+    return {
+      statusCode: 400,
+      headers,
+      body: JSON.stringify({ success: false, error: 'accompanist_type must be either "faculty" or "professional"' }),
     };
   }
 
@@ -140,6 +149,7 @@ const initAccompanist = async (pool, auth, body) => {
       statusCode: 403,
       headers,
       body: JSON.stringify({ 
+        success: false,
         error: 'College quota exceeded (45/45). Remove existing participants before adding new ones.',
         quota_used: quota_used
       }),
@@ -160,7 +170,7 @@ const initAccompanist = async (pool, auth, body) => {
     return {
       statusCode: 404,
       headers,
-      body: JSON.stringify({ error: 'College not found' }),
+      body: JSON.stringify({ success: false, error: 'College not found' }),
     };
   }
 
@@ -170,7 +180,7 @@ const initAccompanist = async (pool, auth, body) => {
   const session_id = crypto.randomBytes(32).toString('hex');
   const expires_at = new Date(Date.now() + 25 * 60 * 1000);
 
-  // Store session (WITHOUT assigned_events)
+  // Store session (WITHOUT assigned_events column)
   await pool
     .request()
     .input('session_id', sql.VarChar(64), session_id)
@@ -188,11 +198,11 @@ const initAccompanist = async (pool, auth, body) => {
       VALUES (@session_id, @college_id, @full_name, @phone, @email, @accompanist_type, @student_id, @expires_at)
     `);
 
-  // Generate SAS URLs for document uploads
+  // Generate SAS URLs for document uploads (renamed to match frontend)
   const blobBasePath = `${college_code}/accompanist-details/${full_name}_${phone}`;
   const upload_urls = {
     passport_photo: generateSASUrl(`${blobBasePath}/passport_photo`),
-    id_proof: generateSASUrl(`${blobBasePath}/id_proof`),
+    government_id_proof: generateSASUrl(`${blobBasePath}/government_id_proof`),
   };
 
   return {
@@ -218,7 +228,7 @@ const finalizeAccompanist = async (pool, auth, body) => {
     return {
       statusCode: 400,
       headers,
-      body: JSON.stringify({ error: 'session_id is required' }),
+      body: JSON.stringify({ success: false, error: 'session_id is required' }),
     };
   }
 
@@ -238,7 +248,7 @@ const finalizeAccompanist = async (pool, auth, body) => {
     return {
       statusCode: 404,
       headers,
-      body: JSON.stringify({ error: 'Invalid or expired session' }),
+      body: JSON.stringify({ success: false, error: 'Invalid or expired session' }),
     };
   }
 
@@ -249,7 +259,7 @@ const finalizeAccompanist = async (pool, auth, body) => {
     return {
       statusCode: 400,
       headers,
-      body: JSON.stringify({ error: 'Session expired. Please restart.' }),
+      body: JSON.stringify({ success: false, error: 'Session expired. Please restart.' }),
     };
   }
 
@@ -275,7 +285,7 @@ const finalizeAccompanist = async (pool, auth, body) => {
     .input('accompanist_type', sql.VarChar(20), session.accompanist_type)
     .input('student_id', sql.Int, session.student_id)
     .input('passport_photo_url', sql.VarChar(500), `https://${AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net/${CONTAINER_NAME}/${college_code}/accompanist-details/${session.full_name}_${session.phone}/passport_photo`)
-    .input('id_proof_url', sql.VarChar(500), `https://${AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net/${CONTAINER_NAME}/${college_code}/accompanist-details/${session.full_name}_${session.phone}/id_proof`)
+    .input('id_proof_url', sql.VarChar(500), `https://${AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net/${CONTAINER_NAME}/${college_code}/accompanist-details/${session.full_name}_${session.phone}/government_id_proof`)
     .query(`
       INSERT INTO accompanists (
         college_id, full_name, phone, email, accompanist_type, student_id, passport_photo_url, id_proof_url
@@ -364,6 +374,122 @@ const getAccompanists = async (pool, auth) => {
 };
 
 // ============================================================================
+// ACTION: update_accompanist_details
+// ============================================================================
+const updateAccompanistDetails = async (pool, auth, body) => {
+  const { accompanist_id, full_name, phone, email } = body;
+
+  if (!accompanist_id) {
+    return {
+      statusCode: 400,
+      headers,
+      body: JSON.stringify({ success: false, error: 'accompanist_id is required' }),
+    };
+  }
+
+  if (!full_name || !phone) {
+    return {
+      statusCode: 400,
+      headers,
+      body: JSON.stringify({ success: false, error: 'full_name and phone are required' }),
+    };
+  }
+
+  // Verify accompanist belongs to this college
+  const verifyResult = await pool
+    .request()
+    .input('accompanist_id', sql.Int, accompanist_id)
+    .input('college_id', sql.Int, auth.college_id)
+    .query(`
+      SELECT accompanist_id
+      FROM accompanists
+      WHERE accompanist_id = @accompanist_id AND college_id = @college_id
+    `);
+
+  if (verifyResult.recordset.length === 0) {
+    return {
+      statusCode: 404,
+      headers,
+      body: JSON.stringify({ success: false, error: 'Accompanist not found or does not belong to your college' }),
+    };
+  }
+
+  // Update ONLY text fields (full_name, phone, email)
+  await pool
+    .request()
+    .input('accompanist_id', sql.Int, accompanist_id)
+    .input('full_name', sql.VarChar(255), full_name)
+    .input('phone', sql.VarChar(20), phone)
+    .input('email', sql.VarChar(255), email || null)
+    .query(`
+      UPDATE accompanists
+      SET 
+        full_name = @full_name,
+        phone = @phone,
+        email = @email
+      WHERE accompanist_id = @accompanist_id
+    `);
+
+  return {
+    statusCode: 200,
+    headers,
+    body: JSON.stringify({
+      success: true,
+      message: 'Accompanist details updated successfully',
+    }),
+  };
+};
+
+// ============================================================================
+// ACTION: delete_accompanist
+// ============================================================================
+const deleteAccompanist = async (pool, auth, body) => {
+  const { accompanist_id } = body;
+
+  if (!accompanist_id) {
+    return {
+      statusCode: 400,
+      headers,
+      body: JSON.stringify({ success: false, error: 'accompanist_id is required' }),
+    };
+  }
+
+  // Verify accompanist belongs to this college
+  const verifyResult = await pool
+    .request()
+    .input('accompanist_id', sql.Int, accompanist_id)
+    .input('college_id', sql.Int, auth.college_id)
+    .query(`
+      SELECT accompanist_id
+      FROM accompanists
+      WHERE accompanist_id = @accompanist_id AND college_id = @college_id
+    `);
+
+  if (verifyResult.recordset.length === 0) {
+    return {
+      statusCode: 404,
+      headers,
+      body: JSON.stringify({ success: false, error: 'Accompanist not found or does not belong to your college' }),
+    };
+  }
+
+  // Delete accompanist (this will cascade delete from accompanist_event_participation if FK is set)
+  await pool
+    .request()
+    .input('accompanist_id', sql.Int, accompanist_id)
+    .query(`DELETE FROM accompanists WHERE accompanist_id = @accompanist_id`);
+
+  return {
+    statusCode: 200,
+    headers,
+    body: JSON.stringify({
+      success: true,
+      message: 'Accompanist removed successfully',
+    }),
+  };
+};
+
+// ============================================================================
 // MAIN HANDLER
 // ============================================================================
 exports.handler = async (event) => {
@@ -403,6 +529,12 @@ exports.handler = async (event) => {
   let pool;
   try {
     const auth = verifyAuth(event);
+    
+    // Handle 401 responses from verifyAuth
+    if (auth.statusCode === 401) {
+      return auth;
+    }
+
     pool = await sql.connect(dbConfig);
 
     if (action === 'init_accompanist') {
@@ -411,6 +543,10 @@ exports.handler = async (event) => {
       return await finalizeAccompanist(pool, auth, body);
     } else if (action === 'get_accompanists') {
       return await getAccompanists(pool, auth);
+    } else if (action === 'update_accompanist_details') {
+      return await updateAccompanistDetails(pool, auth, body);
+    } else if (action === 'delete_accompanist') {
+      return await deleteAccompanist(pool, auth, body);
     } else {
       return {
         statusCode: 400,
