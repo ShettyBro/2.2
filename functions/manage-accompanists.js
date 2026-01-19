@@ -27,53 +27,53 @@ const headers = {
 };
 
 const verifyAuth = (event) => {
- try {
-      const authHeader = event.headers.authorization || event.headers.Authorization;
-         
-         if (!authHeader || !authHeader.startsWith("Bearer ")) {
-           return {
-             statusCode: 401,
-             headers,
-             body: JSON.stringify({
-               success: false,
-               message: "Token expired. Redirecting to login...",
-               redirect: "https://vtufest2026.acharyahabba.com/",
-             }),
-           };
-         }
-     
-         const token = authHeader.substring(7);
-         let decoded;
-     
-         try {
-           decoded = jwt.verify(token, JWT_SECRET);
-         } catch (err) {
-           return {
-             statusCode: 401,
-             headers,
-             body: JSON.stringify({
-               success: false,
-               message: "Token expired. Redirecting to login...",
-               redirect: "https://vtufest2026.acharyahabba.com/",
-             }),
-           };
-         }
-       const role = decoded.role;
- 
- 
-     if (decoded.role !== 'PRINCIPAL' && decoded.role !== 'MANAGER') {
-       throw new Error('Unauthorized: Principal or Manager role required');
-     }
-     const auth = {
-       user_id: decoded.user_id,
-       college_id: decoded.college_id,
-       role: decoded.role,
-     };
-      return auth;
-    } catch (error) {
-      throw error;
+  try {
+    const authHeader = event.headers.authorization || event.headers.Authorization;
+    
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          message: "Token expired. Redirecting to login...",
+          redirect: "https://vtufest2026.acharyahabba.com/",
+        }),
+      };
     }
+
+    const token = authHeader.substring(7);
+    let decoded;
+
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          message: "Token expired. Redirecting to login...",
+          redirect: "https://vtufest2026.acharyahabba.com/",
+        }),
+      };
+    }
+
+    if (decoded.role !== 'PRINCIPAL' && decoded.role !== 'MANAGER') {
+      throw new Error('Unauthorized: Principal or Manager role required');
+    }
+
+    const auth = {
+      user_id: decoded.user_id,
+      college_id: decoded.college_id,
+      role: decoded.role,
+    };
+    return auth;
+  } catch (error) {
+    throw error;
+  }
 };
+
 const generateSASUrl = (blobPath) => {
   const sharedKeyCredential = new StorageSharedKeyCredential(
     AZURE_STORAGE_ACCOUNT_NAME,
@@ -107,17 +107,18 @@ const generateSASUrl = (blobPath) => {
 // ACTION: init_accompanist
 // ============================================================================
 const initAccompanist = async (pool, auth, body) => {
-  const { full_name, phone, email, accompanist_type, student_id, assigned_events } = body;
+  const { full_name, phone, email, accompanist_type, student_id } = body;
 
-  if (!full_name || !phone || !accompanist_type || !assigned_events) {
+  // Validate required fields
+  if (!full_name || !phone || !accompanist_type) {
     return {
       statusCode: 400,
       headers,
-      body: JSON.stringify({ error: 'full_name, phone, accompanist_type, and assigned_events are required' }),
+      body: JSON.stringify({ error: 'full_name, phone, and accompanist_type are required' }),
     };
   }
 
-  // Check quota
+  // Check overall quota (45 total: students + accompanists)
   const quotaCheck = await pool
     .request()
     .input('college_id', sql.Int, auth.college_id)
@@ -138,7 +139,10 @@ const initAccompanist = async (pool, auth, body) => {
     return {
       statusCode: 403,
       headers,
-      body: JSON.stringify({ error: 'College quota exceeded (45/45). Remove existing participants before adding new ones.' }),
+      body: JSON.stringify({ 
+        error: 'College quota exceeded (45/45). Remove existing participants before adding new ones.',
+        quota_used: quota_used
+      }),
     };
   }
 
@@ -166,7 +170,7 @@ const initAccompanist = async (pool, auth, body) => {
   const session_id = crypto.randomBytes(32).toString('hex');
   const expires_at = new Date(Date.now() + 25 * 60 * 1000);
 
-  // Store session
+  // Store session (WITHOUT assigned_events)
   await pool
     .request()
     .input('session_id', sql.VarChar(64), session_id)
@@ -176,16 +180,15 @@ const initAccompanist = async (pool, auth, body) => {
     .input('email', sql.VarChar(255), email || null)
     .input('accompanist_type', sql.VarChar(20), accompanist_type)
     .input('student_id', sql.Int, student_id || null)
-    .input('assigned_events', sql.VarChar(500), JSON.stringify(assigned_events))
     .input('expires_at', sql.DateTime2, expires_at)
     .query(`
       INSERT INTO accompanist_sessions (
-        session_id, college_id, full_name, phone, email, accompanist_type, student_id, assigned_events, expires_at
+        session_id, college_id, full_name, phone, email, accompanist_type, student_id, expires_at
       )
-      VALUES (@session_id, @college_id, @full_name, @phone, @email, @accompanist_type, @student_id, @assigned_events, @expires_at)
+      VALUES (@session_id, @college_id, @full_name, @phone, @email, @accompanist_type, @student_id, @expires_at)
     `);
 
-  // Generate SAS URLs
+  // Generate SAS URLs for document uploads
   const blobBasePath = `${college_code}/accompanist-details/${full_name}_${phone}`;
   const upload_urls = {
     passport_photo: generateSASUrl(`${blobBasePath}/passport_photo`),
@@ -200,6 +203,7 @@ const initAccompanist = async (pool, auth, body) => {
       session_id,
       upload_urls,
       expires_at: expires_at.toISOString(),
+      quota_remaining: 45 - quota_used - 1
     }),
   };
 };
@@ -225,7 +229,7 @@ const finalizeAccompanist = async (pool, auth, body) => {
     .input('college_id', sql.Int, auth.college_id)
     .query(`
       SELECT 
-        full_name, phone, email, accompanist_type, student_id, assigned_events, expires_at
+        full_name, phone, email, accompanist_type, student_id, expires_at
       FROM accompanist_sessions
       WHERE session_id = @session_id AND college_id = @college_id
     `);
@@ -261,7 +265,7 @@ const finalizeAccompanist = async (pool, auth, body) => {
 
   const college_code = collegeResult.recordset[0].college_code;
 
-  // Insert accompanist
+  // Insert accompanist record ONLY (NO event assignment)
   const insertResult = await pool
     .request()
     .input('college_id', sql.Int, auth.college_id)
@@ -282,24 +286,7 @@ const finalizeAccompanist = async (pool, auth, body) => {
 
   const accompanist_id = insertResult.recordset[0].accompanist_id;
 
-  // Insert event assignments
-  const assigned_events = JSON.parse(session.assigned_events);
-  for (const event_id of assigned_events) {
-    await pool
-      .request()
-      .input('accompanist_id', sql.Int, accompanist_id)
-      .input('event_id', sql.Int, event_id)
-      .input('college_id', sql.Int, auth.college_id)
-      .input('assigned_by_user_id', sql.Int, auth.user_id)
-      .query(`
-        INSERT INTO accompanist_event_participation (
-          accompanist_id, event_id, college_id, assigned_by_user_id
-        )
-        VALUES (@accompanist_id, @event_id, @college_id, @assigned_by_user_id)
-      `);
-  }
-
-  // Delete session
+  // Delete session after successful registration
   await pool
     .request()
     .input('session_id', sql.VarChar(64), session_id)
@@ -310,7 +297,7 @@ const finalizeAccompanist = async (pool, auth, body) => {
     headers,
     body: JSON.stringify({
       success: true,
-      message: 'Accompanist added successfully',
+      message: 'Accompanist registered successfully. Event assignment can be done separately.',
       accompanist_id,
     }),
   };
@@ -329,15 +316,18 @@ const getAccompanists = async (pool, auth) => {
         full_name,
         phone,
         email,
-        accompanist_type
+        accompanist_type,
+        student_id,
+        created_at
       FROM accompanists
       WHERE college_id = @college_id
-      ORDER BY full_name ASC
+      ORDER BY created_at DESC
     `);
 
   const accompanists = [];
 
   for (const acc of result.recordset) {
+    // Fetch assigned events (for display purposes only)
     const eventsResult = await pool
       .request()
       .input('accompanist_id', sql.Int, acc.accompanist_id)
@@ -354,6 +344,8 @@ const getAccompanists = async (pool, auth) => {
       phone: acc.phone,
       email: acc.email,
       accompanist_type: acc.accompanist_type,
+      student_id: acc.student_id,
+      created_at: acc.created_at,
       assigned_events: eventsResult.recordset.map(e => ({
         event_id: e.event_id,
         event_name: e.event_name,
