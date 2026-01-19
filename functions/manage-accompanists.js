@@ -29,7 +29,7 @@ const headers = {
 const verifyAuth = (event) => {
   try {
     const authHeader = event.headers.authorization || event.headers.Authorization;
-    
+
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return {
         statusCode: 401,
@@ -148,7 +148,7 @@ const initAccompanist = async (pool, auth, body) => {
     return {
       statusCode: 403,
       headers,
-      body: JSON.stringify({ 
+      body: JSON.stringify({
         success: false,
         error: 'College quota exceeded (45/45). Remove existing participants before adding new ones.',
         quota_used: quota_used
@@ -282,6 +282,7 @@ const finalizeAccompanist = async (pool, auth, body) => {
     .request()
     .input('college_id', sql.Int, auth.college_id)
     .input('college_name', sql.VarChar(255), college_name)
+    .input('created_by_user_id', sql.Int, auth.user_id)
     .input('full_name', sql.VarChar(255), session.full_name)
     .input('phone', sql.VarChar(20), session.phone)
     .input('email', sql.VarChar(255), session.email)
@@ -290,29 +291,32 @@ const finalizeAccompanist = async (pool, auth, body) => {
     .input('passport_photo_url', sql.VarChar(500), `https://${AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net/${CONTAINER_NAME}/${college_code}/accompanist-details/${session.full_name}_${session.phone}/passport_photo`)
     .input('id_proof_url', sql.VarChar(500), `https://${AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net/${CONTAINER_NAME}/${college_code}/accompanist-details/${session.full_name}_${session.phone}/government_id_proof`)
     .query(`
-      INSERT INTO accompanists (
-        college_id,
-        college_name,
-        full_name,
-        phone,
-        email,
-        accompanist_type,
-        student_id,
-        passport_photo_url,
-        id_proof_url
-      )
+     INSERT INTO accompanists (
+  college_id,
+  college_name,
+  created_by_user_id,
+  full_name,
+  phone,
+  email,
+  accompanist_type,
+  student_id,
+  passport_photo_url,
+  id_proof_url
+)
       OUTPUT INSERTED.accompanist_id
-      VALUES (
-        @college_id,
-        @college_name,
-        @full_name,
-        @phone,
-        @email,
-        @accompanist_type,
-        @student_id,
-        @passport_photo_url,
-        @id_proof_url
-      )
+     VALUES (
+  @college_id,
+  @college_name,
+  @created_by_user_id,
+  @full_name,
+  @phone,
+  @email,
+  @accompanist_type,
+  @student_id,
+  @passport_photo_url,
+  @id_proof_url
+)
+
     `);
 
   const accompanist_id = insertResult.recordset[0].accompanist_id;
@@ -534,7 +538,7 @@ exports.handler = async (event) => {
   let pool;
   try {
     const auth = verifyAuth(event);
-    
+
     // Handle 401 responses from verifyAuth
     if (auth.statusCode === 401) {
       return auth;
