@@ -156,12 +156,12 @@ const initAccompanist = async (pool, auth, body) => {
     };
   }
 
-  // Get college_code
+  // Get college_code and college_name
   const collegeResult = await pool
     .request()
     .input('college_id', sql.Int, auth.college_id)
     .query(`
-      SELECT college_code
+      SELECT college_code, college_name
       FROM colleges
       WHERE college_id = @college_id
     `);
@@ -175,6 +175,7 @@ const initAccompanist = async (pool, auth, body) => {
   }
 
   const college_code = collegeResult.recordset[0].college_code;
+  const college_name = collegeResult.recordset[0].college_name;
 
   // Generate session_id
   const session_id = crypto.randomBytes(32).toString('hex');
@@ -263,22 +264,24 @@ const finalizeAccompanist = async (pool, auth, body) => {
     };
   }
 
-  // Get college_code
+  // Get college_code and college_name
   const collegeResult = await pool
     .request()
     .input('college_id', sql.Int, auth.college_id)
     .query(`
-      SELECT college_code
+      SELECT college_code, college_name
       FROM colleges
       WHERE college_id = @college_id
     `);
 
   const college_code = collegeResult.recordset[0].college_code;
+  const college_name = collegeResult.recordset[0].college_name;
 
   // Insert accompanist record ONLY (NO event assignment)
   const insertResult = await pool
     .request()
     .input('college_id', sql.Int, auth.college_id)
+    .input('college_name', sql.VarChar(255), college_name)
     .input('full_name', sql.VarChar(255), session.full_name)
     .input('phone', sql.VarChar(20), session.phone)
     .input('email', sql.VarChar(255), session.email)
@@ -288,10 +291,28 @@ const finalizeAccompanist = async (pool, auth, body) => {
     .input('id_proof_url', sql.VarChar(500), `https://${AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net/${CONTAINER_NAME}/${college_code}/accompanist-details/${session.full_name}_${session.phone}/government_id_proof`)
     .query(`
       INSERT INTO accompanists (
-        college_id, full_name, phone, email, accompanist_type, student_id, passport_photo_url, id_proof_url
+        college_id,
+        college_name,
+        full_name,
+        phone,
+        email,
+        accompanist_type,
+        student_id,
+        passport_photo_url,
+        id_proof_url
       )
       OUTPUT INSERTED.accompanist_id
-      VALUES (@college_id, @full_name, @phone, @email, @accompanist_type, @student_id, @passport_photo_url, @id_proof_url)
+      VALUES (
+        @college_id,
+        @college_name,
+        @full_name,
+        @phone,
+        @email,
+        @accompanist_type,
+        @student_id,
+        @passport_photo_url,
+        @id_proof_url
+      )
     `);
 
   const accompanist_id = insertResult.recordset[0].accompanist_id;
@@ -334,34 +355,18 @@ const getAccompanists = async (pool, auth) => {
       ORDER BY created_at DESC
     `);
 
-  const accompanists = [];
-
-  for (const acc of result.recordset) {
-    // Fetch assigned events (for display purposes only)
-    const eventsResult = await pool
-      .request()
-      .input('accompanist_id', sql.Int, acc.accompanist_id)
-      .query(`
-        SELECT e.event_id, e.event_name
-        FROM accompanist_event_participation aep
-        INNER JOIN events e ON aep.event_id = e.event_id
-        WHERE aep.accompanist_id = @accompanist_id
-      `);
-
-    accompanists.push({
-      accompanist_id: acc.accompanist_id,
-      full_name: acc.full_name,
-      phone: acc.phone,
-      email: acc.email,
-      accompanist_type: acc.accompanist_type,
-      student_id: acc.student_id,
-      created_at: acc.created_at,
-      assigned_events: eventsResult.recordset.map(e => ({
-        event_id: e.event_id,
-        event_name: e.event_name,
-      })),
-    });
-  }
+  // Map results WITHOUT fetching events (events table is deprecated)
+  // Event assignment is handled separately in event_* tables
+  const accompanists = result.recordset.map(acc => ({
+    accompanist_id: acc.accompanist_id,
+    full_name: acc.full_name,
+    phone: acc.phone,
+    email: acc.email,
+    accompanist_type: acc.accompanist_type,
+    student_id: acc.student_id,
+    created_at: acc.created_at,
+    assigned_events: [], // Empty array - events not managed here
+  }));
 
   return {
     statusCode: 200,
