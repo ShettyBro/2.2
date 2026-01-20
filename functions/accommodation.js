@@ -22,52 +22,51 @@ const headers = {
 };
 
 const verifyAuth = (event) => {
- try {
-      const authHeader = event.headers.authorization || event.headers.Authorization;
-         
-         if (!authHeader || !authHeader.startsWith("Bearer ")) {
-           return {
-             statusCode: 401,
-             headers,
-             body: JSON.stringify({
-               success: false,
-               message: "Token expired. Redirecting to login...",
-               redirect: "https://vtufest2026.acharyahabba.com/",
-             }),
-           };
-         }
-     
-         const token = authHeader.substring(7);
-         let decoded;
-     
-         try {
-           decoded = jwt.verify(token, JWT_SECRET);
-         } catch (err) {
-           return {
-             statusCode: 401,
-             headers,
-             body: JSON.stringify({
-               success: false,
-               message: "Token expired. Redirecting to login...",
-               redirect: "https://vtufest2026.acharyahabba.com/",
-             }),
-           };
-         }
-       const role = decoded.role;
- 
- 
-     if (decoded.role !== 'PRINCIPAL' && decoded.role !== 'MANAGER') {
-       throw new Error('Unauthorized: Principal or Manager role required');
-     }
-     const auth = {
-       user_id: decoded.user_id,
-       college_id: decoded.college_id,
-       role: decoded.role,
-     };
-      return auth;
-    } catch (error) {
-      throw error;
+  try {
+    const authHeader = event.headers.authorization || event.headers.Authorization;
+    
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          message: "Token expired. Redirecting to login...",
+          redirect: "https://vtufest2026.acharyahabba.com/",
+        }),
+      };
     }
+
+    const token = authHeader.substring(7);
+    let decoded;
+
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          message: "Token expired. Redirecting to login...",
+          redirect: "https://vtufest2026.acharyahabba.com/",
+        }),
+      };
+    }
+
+    if (decoded.role !== 'PRINCIPAL' && decoded.role !== 'MANAGER') {
+      throw new Error('Unauthorized: Principal or Manager role required');
+    }
+
+    const auth = {
+      user_id: decoded.user_id,
+      college_id: decoded.college_id,
+      role: decoded.role,
+    };
+    return auth;
+  } catch (error) {
+    throw error;
+  }
 };
 
 // ============================================================================
@@ -79,11 +78,10 @@ const submitAccommodation = async (pool, auth, body) => {
     total_girls,
     contact_person_name,
     contact_person_phone,
-    contact_email,
     special_requirements,
   } = body;
 
-  if (!total_boys || !total_girls || !contact_person_name || !contact_person_phone || !contact_email) {
+  if (!total_boys || !total_girls || !contact_person_name || !contact_person_phone) {
     return {
       statusCode: 400,
       headers,
@@ -91,7 +89,7 @@ const submitAccommodation = async (pool, auth, body) => {
     };
   }
 
-  // Check if accommodation already exists
+  // STRICT: Check if accommodation already exists for this college_id
   const existingResult = await pool
     .request()
     .input('college_id', sql.Int, auth.college_id)
@@ -105,7 +103,10 @@ const submitAccommodation = async (pool, auth, body) => {
     return {
       statusCode: 403,
       headers,
-      body: JSON.stringify({ error: 'Accommodation request already submitted for this college' }),
+      body: JSON.stringify({ 
+        success: false,
+        error: 'Accommodation request already submitted for this college. Re-application is not allowed.' 
+      }),
     };
   }
 
@@ -117,18 +118,17 @@ const submitAccommodation = async (pool, auth, body) => {
     .input('total_girls', sql.Int, parseInt(total_girls))
     .input('contact_person_name', sql.VarChar(255), contact_person_name)
     .input('contact_person_phone', sql.VarChar(20), contact_person_phone)
-    .input('contact_email', sql.VarChar(255), contact_email)
     .input('special_requirements', sql.VarChar(500), special_requirements || null)
     .input('applied_by_user_id', sql.Int, auth.user_id)
     .input('applied_by_type', sql.VarChar(20), auth.role)
     .query(`
       INSERT INTO accommodation_requests (
         college_id, total_boys, total_girls, contact_person_name, contact_person_phone, 
-        contact_email, special_requirements, applied_by_user_id, applied_by_type, status
+        special_requirements, applied_by_user_id, applied_by_type, status
       )
       VALUES (
         @college_id, @total_boys, @total_girls, @contact_person_name, @contact_person_phone,
-        @contact_email, @special_requirements, @applied_by_user_id, @applied_by_type, 'PENDING'
+        @special_requirements, @applied_by_user_id, @applied_by_type, 'PENDING'
       )
     `);
 
@@ -155,7 +155,6 @@ const getAccommodationStatus = async (pool, auth) => {
         total_girls,
         contact_person_name,
         contact_person_phone,
-        contact_email,
         special_requirements,
         status,
         applied_at,
