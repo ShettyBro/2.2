@@ -27,18 +27,18 @@ const headers = {
 };
 
 // ============================================================================
-// 25 EVENT TABLES (Exact names from schema)
+// 25 EVENT TABLES (EXACT NAMES FROM SCHEMA - CORRECTED)
 // ============================================================================
 const EVENT_TABLES = [
   'event_classical_vocal_solo',
   'event_light_vocal_solo',
   'event_western_vocal_solo',
-  'event_classical_instrumental_percussion',
-  'event_classical_instrumental_non_percussion',
+  'event_classical_instr_percussion',              // ✅ FIXED
+  'event_classical_instr_non_percussion',          // ✅ FIXED
   'event_folk_orchestra',
   'event_group_song_indian',
   'event_group_song_western',
-  'event_folk_tribal_dance',
+  'event_folk_dance',                              // ✅ FIXED
   'event_classical_dance_solo',
   'event_mime',
   'event_mimicry',
