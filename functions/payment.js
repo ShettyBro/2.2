@@ -26,53 +26,83 @@ const headers = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
+// ============================================================================
+// 25 EVENT TABLES (Exact names from schema)
+// ============================================================================
+const EVENT_TABLES = [
+  'event_classical_vocal_solo',
+  'event_light_vocal_solo',
+  'event_western_vocal_solo',
+  'event_classical_instrumental_percussion',
+  'event_classical_instrumental_non_percussion',
+  'event_folk_orchestra',
+  'event_group_song_indian',
+  'event_group_song_western',
+  'event_folk_tribal_dance',
+  'event_classical_dance_solo',
+  'event_mime',
+  'event_mimicry',
+  'event_one_act_play',
+  'event_skits',
+  'event_debate',
+  'event_elocution',
+  'event_quiz',
+  'event_cartooning',
+  'event_clay_modelling',
+  'event_collage_making',
+  'event_installation',
+  'event_on_spot_painting',
+  'event_poster_making',
+  'event_rangoli',
+  'event_spot_photography',
+];
+
 const verifyAuth = (event) => {
- try {
-      const authHeader = event.headers.authorization || event.headers.Authorization;
-         
-         if (!authHeader || !authHeader.startsWith("Bearer ")) {
-           return {
-             statusCode: 401,
-             headers,
-             body: JSON.stringify({
-               success: false,
-               message: "Token expired. Redirecting to login...",
-               redirect: "https://vtufest2026.acharyahabba.com/",
-             }),
-           };
-         }
-     
-         const token = authHeader.substring(7);
-         let decoded;
-     
-         try {
-           decoded = jwt.verify(token, JWT_SECRET);
-         } catch (err) {
-           return {
-             statusCode: 401,
-             headers,
-             body: JSON.stringify({
-               success: false,
-               message: "Token expired. Redirecting to login...",
-               redirect: "https://vtufest2026.acharyahabba.com/",
-             }),
-           };
-         }
-       const role = decoded.role;
- 
- 
-     if (decoded.role !== 'PRINCIPAL' && decoded.role !== 'MANAGER') {
-       throw new Error('Unauthorized: Principal or Manager role required');
-     }
-     const auth = {
-       user_id: decoded.user_id,
-       college_id: decoded.college_id,
-       role: decoded.role,
-     };
-      return auth;
-    } catch (error) {
-      throw error;
+  try {
+    const authHeader = event.headers.authorization || event.headers.Authorization;
+    
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          message: "Token expired. Redirecting to login...",
+          redirect: "https://vtufest2026.acharyahabba.com/",
+        }),
+      };
     }
+
+    const token = authHeader.substring(7);
+    let decoded;
+
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          message: "Token expired. Redirecting to login...",
+          redirect: "https://vtufest2026.acharyahabba.com/",
+        }),
+      };
+    }
+
+    if (decoded.role !== 'PRINCIPAL' && decoded.role !== 'MANAGER') {
+      throw new Error('Unauthorized: Principal or Manager role required');
+    }
+
+    const auth = {
+      user_id: decoded.user_id,
+      college_id: decoded.college_id,
+      role: decoded.role,
+    };
+    return auth;
+  } catch (error) {
+    throw error;
+  }
 };
 
 const generateSASUrl = (blobPath) => {
@@ -125,7 +155,7 @@ const getPaymentInfo = async (pool, auth) => {
     return {
       statusCode: 404,
       headers,
-      body: JSON.stringify({ error: 'College not found' }),
+      body: JSON.stringify({ success: false, error: 'College not found' }),
     };
   }
 
@@ -143,27 +173,24 @@ const getPaymentInfo = async (pool, auth) => {
     };
   }
 
-  // Count total unique events college is participating in
+  // ============================================================================
+  // COUNT EVENTS USING 25 SEPARATE TABLES (EXISTS checks)
+  // ============================================================================
+  const eventCheckQueries = EVENT_TABLES.map(table => 
+    `SELECT '${table}' AS event_table_name WHERE EXISTS (
+      SELECT 1 FROM ${table} WHERE college_id = @college_id
+    )`
+  );
+
+  const unionQuery = eventCheckQueries.join(' UNION ALL ');
+
   const eventsResult = await pool
     .request()
     .input('college_id', sql.Int, auth.college_id)
-    .query(`
-      SELECT DISTINCT e.event_id, e.event_name
-      FROM student_event_participation sep
-      INNER JOIN events e ON sep.event_id = e.event_id
-      INNER JOIN students s ON sep.student_id = s.student_id
-      WHERE s.college_id = @college_id
-      
-      UNION
-      
-      SELECT DISTINCT e.event_id, e.event_name
-      FROM accompanist_event_participation aep
-      INNER JOIN events e ON aep.event_id = e.event_id
-      WHERE aep.college_id = @college_id
-    `);
+    .query(unionQuery);
 
-  const total_events = eventsResult.recordset.length;
-  const events_list = eventsResult.recordset.map(e => e.event_name);
+  const participating_event_keys = eventsResult.recordset.map(row => row.event_table_name);
+  const total_events = participating_event_keys.length;
 
   // Calculate fee
   const amount_to_pay = total_events < 10 ? 8000 : 25000;
@@ -177,7 +204,9 @@ const getPaymentInfo = async (pool, auth) => {
         status,
         uploaded_at,
         admin_remarks,
-        receipt_url
+        receipt_url,
+        amount_paid,
+        utr_reference_number
       FROM payment_receipts
       WHERE college_id = @college_id
     `);
@@ -190,6 +219,8 @@ const getPaymentInfo = async (pool, auth) => {
       uploaded_at: pay.uploaded_at,
       admin_remarks: pay.admin_remarks,
       receipt_url: pay.receipt_url,
+      amount_paid: pay.amount_paid,
+      utr_reference_number: pay.utr_reference_number,
     };
   }
 
@@ -200,7 +231,7 @@ const getPaymentInfo = async (pool, auth) => {
       success: true,
       can_upload: true,
       total_events,
-      events_list,
+      participating_event_keys,
       amount_to_pay,
       payment_status,
     }),
@@ -211,13 +242,13 @@ const getPaymentInfo = async (pool, auth) => {
 // ACTION: init_payment_upload
 // ============================================================================
 const initPaymentUpload = async (pool, auth, body) => {
-  const { amount_paid } = body;
+  const { amount_paid, utr_reference_number } = body;
 
-  if (!amount_paid) {
+  if (!amount_paid || !utr_reference_number) {
     return {
       statusCode: 400,
       headers,
-      body: JSON.stringify({ error: 'amount_paid is required' }),
+      body: JSON.stringify({ success: false, error: 'amount_paid and utr_reference_number are required' }),
     };
   }
 
@@ -238,7 +269,7 @@ const initPaymentUpload = async (pool, auth, body) => {
     return {
       statusCode: 404,
       headers,
-      body: JSON.stringify({ error: 'College not found' }),
+      body: JSON.stringify({ success: false, error: 'College not found' }),
     };
   }
 
@@ -248,7 +279,7 @@ const initPaymentUpload = async (pool, auth, body) => {
     return {
       statusCode: 403,
       headers,
-      body: JSON.stringify({ error: 'Final approval not done yet. Cannot upload payment.' }),
+      body: JSON.stringify({ success: false, error: 'Final approval not done yet. Cannot upload payment.' }),
     };
   }
 
@@ -266,7 +297,7 @@ const initPaymentUpload = async (pool, auth, body) => {
     return {
       statusCode: 403,
       headers,
-      body: JSON.stringify({ error: 'Payment receipt already uploaded for this college' }),
+      body: JSON.stringify({ success: false, error: 'Payment receipt already uploaded for this college' }),
     };
   }
 
@@ -280,10 +311,11 @@ const initPaymentUpload = async (pool, auth, body) => {
     .input('session_id', sql.VarChar(64), session_id)
     .input('college_id', sql.Int, auth.college_id)
     .input('amount_paid', sql.Int, parseInt(amount_paid))
+    .input('utr_reference_number', sql.VarChar(100), utr_reference_number)
     .input('expires_at', sql.DateTime2, expires_at)
     .query(`
-      INSERT INTO payment_sessions (session_id, college_id, amount_paid, expires_at)
-      VALUES (@session_id, @college_id, @amount_paid, @expires_at)
+      INSERT INTO payment_sessions (session_id, college_id, amount_paid, utr_reference_number, expires_at)
+      VALUES (@session_id, @college_id, @amount_paid, @utr_reference_number, @expires_at)
     `);
 
   // Generate SAS URL
@@ -312,7 +344,7 @@ const finalizePayment = async (pool, auth, body) => {
     return {
       statusCode: 400,
       headers,
-      body: JSON.stringify({ error: 'session_id is required' }),
+      body: JSON.stringify({ success: false, error: 'session_id is required' }),
     };
   }
 
@@ -322,7 +354,7 @@ const finalizePayment = async (pool, auth, body) => {
     .input('session_id', sql.VarChar(64), session_id)
     .input('college_id', sql.Int, auth.college_id)
     .query(`
-      SELECT amount_paid, expires_at
+      SELECT amount_paid, utr_reference_number, expires_at
       FROM payment_sessions
       WHERE session_id = @session_id AND college_id = @college_id
     `);
@@ -331,7 +363,7 @@ const finalizePayment = async (pool, auth, body) => {
     return {
       statusCode: 404,
       headers,
-      body: JSON.stringify({ error: 'Invalid or expired session' }),
+      body: JSON.stringify({ success: false, error: 'Invalid or expired session' }),
     };
   }
 
@@ -342,7 +374,7 @@ const finalizePayment = async (pool, auth, body) => {
     return {
       statusCode: 400,
       headers,
-      body: JSON.stringify({ error: 'Session expired. Please restart.' }),
+      body: JSON.stringify({ success: false, error: 'Session expired. Please restart.' }),
     };
   }
 
@@ -358,6 +390,16 @@ const finalizePayment = async (pool, auth, body) => {
 
   const college = collegeResult.recordset[0];
 
+  // Get user info for uploaded_by_name
+  const userResult = await pool
+    .request()
+    .input('user_id', sql.Int, auth.user_id)
+    .query(`
+      SELECT full_name FROM users WHERE user_id = @user_id
+    `);
+
+  const uploaded_by_name = userResult.recordset[0]?.full_name || 'Unknown';
+
   // Insert payment receipt
   await pool
     .request()
@@ -366,14 +408,17 @@ const finalizePayment = async (pool, auth, body) => {
     .input('college_name', sql.VarChar(255), college.college_name)
     .input('receipt_url', sql.VarChar(500), `https://${AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net/${CONTAINER_NAME}/${college.college_code}/payment-proofs/payment_proof`)
     .input('amount_paid', sql.Int, session.amount_paid)
-    .input('uploaded_by_name', sql.VarChar(255), auth.full_name)
+    .input('utr_reference_number', sql.VarChar(100), session.utr_reference_number)
+    .input('uploaded_by_name', sql.VarChar(255), uploaded_by_name)
     .input('uploaded_by_type', sql.VarChar(20), auth.role)
     .query(`
       INSERT INTO payment_receipts (
-        college_id, college_code, college_name, receipt_url, amount_paid, uploaded_by_name, uploaded_by_type, status
+        college_id, college_code, college_name, receipt_url, amount_paid, 
+        utr_reference_number, uploaded_by_name, uploaded_by_type, status
       )
       VALUES (
-        @college_id, @college_code, @college_name, @receipt_url, @amount_paid, @uploaded_by_name, @uploaded_by_type, 'waiting_for_verification'
+        @college_id, @college_code, @college_name, @receipt_url, @amount_paid, 
+        @utr_reference_number, @uploaded_by_name, @uploaded_by_type, 'waiting_for_verification'
       )
     `);
 
@@ -388,7 +433,7 @@ const finalizePayment = async (pool, auth, body) => {
     headers,
     body: JSON.stringify({
       success: true,
-      message: 'Payment receipt uploaded successfully',
+      message: 'Payment receipt uploaded successfully. Waiting for verification.',
     }),
   };
 };
@@ -433,6 +478,12 @@ exports.handler = async (event) => {
   let pool;
   try {
     const auth = verifyAuth(event);
+    
+    // Handle 401 responses from verifyAuth
+    if (auth.statusCode === 401) {
+      return auth;
+    }
+
     pool = await sql.connect(dbConfig);
 
     if (action === 'get_payment_info') {
