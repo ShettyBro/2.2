@@ -24,7 +24,7 @@ const headers = {
 const verifyAuth = (event) => {
   try {
     const authHeader = event.headers.authorization || event.headers.Authorization;
-    
+
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return {
         statusCode: 401,
@@ -103,9 +103,9 @@ const submitAccommodation = async (pool, auth, body) => {
     return {
       statusCode: 403,
       headers,
-      body: JSON.stringify({ 
+      body: JSON.stringify({
         success: false,
-        error: 'Accommodation request already submitted for this college. Re-application is not allowed.' 
+        error: 'Accommodation request already submitted for this college. Re-application is not allowed.'
       }),
     };
   }
@@ -120,16 +120,34 @@ const submitAccommodation = async (pool, auth, body) => {
     .input('contact_person_phone', sql.VarChar(20), contact_person_phone)
     .input('special_requirements', sql.VarChar(500), special_requirements || null)
     .input('applied_by_user_id', sql.Int, auth.user_id)
+    .input('applied_by_role', sql.VarChar(20), auth.role)
     .input('applied_by_type', sql.VarChar(20), auth.role)
     .query(`
       INSERT INTO accommodation_requests (
-        college_id, total_boys, total_girls, contact_person_name, contact_person_phone, 
-        special_requirements, applied_by_user_id, applied_by_type, status
-      )
-      VALUES (
-        @college_id, @total_boys, @total_girls, @contact_person_name, @contact_person_phone,
-        @special_requirements, @applied_by_user_id, @applied_by_type, 'PENDING'
-      )
+  college_id,
+  total_boys,
+  total_girls,
+  contact_person_name,
+  contact_person_phone,
+  special_requirements,
+  applied_by_user_id,
+  applied_by_role,
+  applied_by_type,
+  status
+)
+VALUES (
+  @college_id,
+  @total_boys,
+  @total_girls,
+  @contact_person_name,
+  @contact_person_phone,
+  @special_requirements,
+  @applied_by_user_id,
+  @applied_by_role,
+  @applied_by_type,
+  'PENDING'
+)
+
     `);
 
   return {
